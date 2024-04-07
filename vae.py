@@ -62,6 +62,59 @@ class VAE(nn.Module):
         return x_hat, mu, logvar
 
 
+class CVAE(nn.Module):
+    def __init__(self, input_size, num_classes=10, latent_size=15):
+        super().__init__()
+        self.input_size = input_size
+        self.latent_size = latent_size
+        self.num_classes = num_classes
+
+        self.hidden_dim = 400
+
+        self.encoder = nn.Sequential(
+            nn.Linear(self.input_size + self.num_classes, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+        )
+
+        self.mu_layer = nn.Linear(self.hidden_dim, self.latent_size)
+        self.logvar_layer = nn.Linear(self.hidden_dim, self.latent_size)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(self.latent_size + self.num_classes, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.input_size),
+            nn.Sigmoid(),
+            nn.Unflatten(dim=1, unflattened_size=(1, 28, 28)),
+        )
+
+    def forward(self, x, c):
+        """
+        Args:
+            x: input data for this timestep of shape (N, 1, H, W)
+            c: one hot vector representing the input class (0-9) (N, C)
+        """
+        x_flat = torch.flatten(x, start_dim=1, end_dim=-1)
+        x_concat = torch.cat((x_flat, c), dim=1)
+
+        features = self.encoder(x_concat)
+        mu = self.mu_layer(features)
+        logvar = self.logvar_layer(features)
+
+        z = reparametrize(mu=mu, logvar=logvar)
+
+        x_hat = self.decoder(torch.cat((z, c), dim=1))
+
+        return x_hat, mu, logvar
+
+
 def reparametrize(mu, logvar):
     # z = mu + sigma * epsilon
 
