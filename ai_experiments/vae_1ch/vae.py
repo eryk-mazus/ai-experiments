@@ -1,7 +1,7 @@
-# input_size: 1 * 28 * 28 = 784
-# flatten: 784
-
-# values: from 0 to 1
+"""
+VAE and Conditional VAE implementation
+Operates on 1 x 28 x 28 images normalized to 0-1 values 
+"""
 
 import torch
 from torch import nn
@@ -116,6 +116,7 @@ class CVAE(nn.Module):
 
 
 def reparametrize(mu, logvar):
+    # reparametrization trick
     # z = mu + sigma * epsilon
 
     sigma = torch.sqrt(torch.exp(logvar))
@@ -124,9 +125,7 @@ def reparametrize(mu, logvar):
 
 
 def loss_function(x_hat, x, mu, logvar):
-    """
-    loss for VAEs contains two terms: a reconstruction loss and KL divergence term
-    """
+    # loss for VAEs contains two terms: a reconstruction loss and KL divergence term
     N = mu.shape[0]
 
     # The minus sign is handled by the BCE loss itself.
