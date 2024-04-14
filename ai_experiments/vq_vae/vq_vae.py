@@ -193,6 +193,4 @@ if __name__ == "__main__":
 
 
 # add better comments and docstrings to remember
-# log loss
 # torch compile ?
-# improve
