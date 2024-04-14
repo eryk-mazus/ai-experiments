@@ -3,6 +3,7 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import torchvision.utils as vision_utils
+from loguru import logger
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision import transforms as T
@@ -50,6 +51,9 @@ def get_celeba_dataloaders(
     test_data = datasets.CelebA(
         root, split="test", transform=val_transform, download=False
     )
+
+    logger.info("Training set has {} instances".format(len(training_data)))
+    logger.info("Test set has {} instances".format(len(test_data)))
 
     train_dataloader = DataLoader(
         training_data,
