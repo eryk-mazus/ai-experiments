@@ -1,3 +1,5 @@
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import fire
@@ -10,6 +12,24 @@ from ai_experiments.dataloaders.celeba import get_celeba_dataloaders
 from ai_experiments.vq_vae.vq_vae import VQ_VAE, VQ_VAE_Loss
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+class AverageMeter:
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n: int = 1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count if self.count != 0 else 0
 
 
 class VQ_VAE_Trainer:
@@ -22,6 +42,7 @@ class VQ_VAE_Trainer:
         train_loader: DataLoader,
         val_loader: DataLoader,
         device: str,
+        output_dir: str,
         batch_scheduler=None,
     ) -> None:
         self.model = model
@@ -36,64 +57,94 @@ class VQ_VAE_Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
 
-    def train_one_epoch(self):
-        running_loss = 0.0
-        last_loss = 0
+        self.output_dir = output_dir
+
+    def train_one_epoch(self, log_every: int = 10):
+        loss_meter = AverageMeter()
+        reconstruction_loss_meter = AverageMeter()
+        vq_loss_meter = AverageMeter()
 
         for i, batch in enumerate(self.train_loader):
-
-            # Every data instance is an input + label pair
             inputs, _ = batch
             inputs = inputs.to(self.device)
 
-            # Zero your gradients for every batch!
             self.optimizer.zero_grad()
 
-            # Make predictions for this batch: reconstructed image and vq_loss
             outputs = self.model(inputs)
-
-            # Compute the loss and its gradients
             losses = self.loss_cls(outputs, inputs)
-            losses["loss"].backward()
 
-            # Adjust learning weights
+            losses["loss"].backward()
             self.optimizer.step()
 
             if self.batch_scheduler is not None:
                 self.batch_scheduler.step()
 
-            # Gather data and report
-            # TODO: report other losses as well
-            running_loss += losses["loss"].item()
-            if i % 10 == 9:
-                last_loss = running_loss / 10
-                logger.info("  batch {} loss: {}".format(i + 1, last_loss))
-                running_loss = 0.0
+            loss_meter.update(losses["loss"].item(), inputs.size(0))
+            reconstruction_loss_meter.update(
+                losses["reconstruction_loss"].item(), inputs.size(0)
+            )
+            vq_loss_meter.update(losses["vq_loss"].item(), inputs.size(0))
 
-        return last_loss
+            if (i + 1) % log_every == 0:
+                logger.info(
+                    f"Step {i + 1} - Total Loss: {loss_meter.avg:.4f}, Reconstruction Loss: {reconstruction_loss_meter.avg:.4f}, VQ Loss: {vq_loss_meter.avg:.4f}"
+                )
 
-    def train(self):
+        return {
+            "loss": loss_meter.avg,
+            "reconstruction_loss": reconstruction_loss_meter.avg,
+            "vq_loss": vq_loss_meter.avg,
+        }
+
+    def validate_one_epoch(self):
+        loss_meter = AverageMeter()
+        reconstruction_loss_meter = AverageMeter()
+        vq_loss_meter = AverageMeter()
+
+        self.model.eval()
+        with torch.no_grad():
+            for i, v_batch in enumerate(self.val_loader):
+                vinputs, _ = v_batch
+                vinputs = vinputs.to(self.device)
+                voutputs = self.model(vinputs)
+                vlosses = self.loss_cls(voutputs, vinputs)
+
+                loss_meter.update(vlosses["loss"].item(), vinputs.size(0))
+                reconstruction_loss_meter.update(
+                    vlosses["reconstruction_loss"].item(), vinputs.size(0)
+                )
+                vq_loss_meter.update(vlosses["vq_loss"].item(), vinputs.size(0))
+
+        return {
+            "loss": loss_meter.avg,
+            "reconstruction_loss": reconstruction_loss_meter.avg,
+            "vq_loss": vq_loss_meter.avg,
+        }
+
+    def train(self, log_every: int = 10):
         for epoch in range(self.epochs):
             logger.info("EPOCH {}:".format(epoch + 1))
 
             self.model.train(True)
-            avg_loss = self.train_one_epoch()
+            train_summary = self.train_one_epoch(log_every=log_every)
+            self.log_loss_summary(train_summary, stage="Training")
 
-            self.model.eval()
-            running_vloss = 0.0
+            validation_summary = self.validate_one_epoch()
+            self.log_loss_summary(validation_summary, stage="Validation")
 
-            with torch.no_grad():
-                for i, v_batch in enumerate(self.val_loader):
-                    vinputs, _ = v_batch
-                    vinputs = vinputs.to(self.device)
-                    voutputs = self.model(vinputs)
-                    vlosses = self.loss_cls(voutputs, vinputs)
-                    running_vloss += vlosses["loss"]
+        # save the final checkpoint
+        output_path = Path(self.output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
 
-            avg_vloss = running_vloss / (i + 1)
-            logger.info("LOSS train {} valid {}".format(avg_loss, avg_vloss))
+        model_name = "model_{}".format(TIMESTAMP)
+        model_path = output_path / model_name
 
-            # todo: save checkpoint
+        torch.save(self.model.state_dict(), model_path)
+
+    def log_loss_summary(self, loss_summary, stage="Training"):
+        logger.info(f"{stage} Summary: ")
+        for key, value in loss_summary.items():
+            logger.info(f"{key}: {value:.4f}")
 
 
 def main(
@@ -109,10 +160,12 @@ def main(
     epochs: int = 20,
     learning_rate: float = 2e-4,
     weight_decay: float = 0.01,
+    vq_loss_requlatization: float = 0.1,
     # other
+    output_dir: str = "output",
+    log_every: int = 10,
     device: str = DEVICE,
 ):
-
     train_loader, val_loader = get_celeba_dataloaders(
         root=root, image_size=image_size, batch_size=batch_size, num_workers=num_workers
     )
@@ -130,7 +183,7 @@ def main(
         epochs=epochs,
     )
 
-    loss_cls = VQ_VAE_Loss(regularization=0.1)
+    loss_cls = VQ_VAE_Loss(regularization=vq_loss_requlatization)
 
     trainer = VQ_VAE_Trainer(
         model=model,
@@ -141,9 +194,10 @@ def main(
         val_loader=val_loader,
         device=device,
         batch_scheduler=lr_scheduler,
+        output_dir=output_dir,
     )
 
-    trainer.train()
+    trainer.train(log_every=log_every)
 
     print("done.")
 
