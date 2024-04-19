@@ -55,6 +55,101 @@ class VectorQuantizer(nn.Module):
         return quantized_latents, vq_loss
 
 
+class VectorQuantizerEMA(nn.Module):
+    def __init__(
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        commitment_cost: float = 0.25,
+        gamma: float = 0.99,
+    ) -> None:
+        """
+        VQ with dictionary items being updated with Exponential Moving Averages
+
+        Args:
+            num_embeddings: number of vectors in the quantized space (K)
+            embedding_dim: dimensionality of the tensors in the quantized space (D)
+            commitment_cost: scalar which controls the weighting of the loss terms (Beta)
+            gamma: decay parameter with a value between 0 and 1
+        """
+        super().__init__()
+
+        self.commitment_cost = commitment_cost
+        self.gamma = gamma
+
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        self.embedding = nn.Embedding(self.num_embeddings, self.embedding_dim)
+
+        # EMA weights and cluster sizes
+        self.ema_cluster_size = nn.Parameter(
+            torch.zeros(num_embeddings), requires_grad=False
+        )
+        self.ema_embedding = nn.Parameter(
+            torch.zeros_like(self.embedding.weight), requires_grad=False
+        )
+
+        self.init_weights()
+
+    def init_weights(self) -> None:
+        nn.init.uniform_(
+            self.embedding.weight, -1 / self.num_embeddings, 1 / self.num_embeddings
+        )
+        # initialize EMA embedding to the initial weights
+        self.ema_embedding.data.copy_(self.embedding.weight.data)
+
+    def forward(self, x: torch.Tensor):
+        # input: N x C x H x W
+        # embed: K x C
+
+        flat_x = x.view(-1, self.embedding_dim)  # -1 x C
+
+        # -1 x 1 x C  -  K x C  ==> -1 x K x C  ==> sum(-1) ==> -1 x K
+        distances = (flat_x.unsqueeze(1) - self.embedding.weight).pow(2).sum(-1)
+        nearest_embedding_idx = distances.argmin(1)  # -1
+
+        # mapping to embeddings, back to input dimensions:
+        quantized_latents = self.embedding(nearest_embedding_idx).view_as(x)
+
+        if self.training:
+            # using one-hot encoding to find the usage of each embedding
+            # -1 x K
+            encodings = F.one_hot(nearest_embedding_idx, self.num_embeddings).type_as(
+                self.embedding.weight
+            )
+            # usage of each embedding, n_i in paper
+            encoding_sum = encodings.sum(0)
+            encoding_sum = torch.where(
+                encoding_sum > 0, encoding_sum, torch.ones_like(encoding_sum)
+            )
+
+            # EMA update of cluster sizes (N_i in paper)
+            # mutiply each element by gamma and add count * (1 - gamma)
+            self.ema_cluster_size.data.mul_(self.gamma).add_(
+                encoding_sum, alpha=1 - self.gamma
+            )
+
+            # EMA update of embeddings (m_i in paper)
+            dw = torch.matmul(encodings.t(), flat_x)
+            self.ema_embedding.data.mul_(self.gamma).add_(dw, alpha=1 - self.gamma)
+
+            # smoothing
+            n = self.ema_cluster_size.sum()
+            cluster_size_smooth = self.ema_cluster_size / n
+
+            self.embedding.weight.data.copy_(
+                self.ema_embedding / cluster_size_smooth.unsqueeze(1)
+            )
+
+        # Loss calculation (just commitment loss)
+        vq_loss = self.commitment_cost * F.mse_loss(x, quantized_latents.detach())
+
+        # Passing the gradient from the decoder straight to encoder
+        quantized_latents = x + (quantized_latents - x).detach()
+
+        return quantized_latents, vq_loss
+
+
 class ResidualBlock(nn.Module):
     def __init__(self, hidden_dim: int = 256) -> None:
         super().__init__()
@@ -186,7 +281,9 @@ if __name__ == "__main__":
     N, C, H, W = 2, 3, 32, 32
     x = torch.randn(N, C, H, W)
 
-    model = VQ_VAE()
-    y, loss = model(x)
+    # model = VQ_VAE()
+    # y, loss = model(x)
 
+    vq = VectorQuantizerEMA(num_embeddings=10, embedding_dim=3)
+    _ = vq(x)
     ...
