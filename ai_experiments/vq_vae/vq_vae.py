@@ -190,7 +190,3 @@ if __name__ == "__main__":
     y, loss = model(x)
 
     ...
-
-
-# add better comments and docstrings to remember
-# torch compile ?
