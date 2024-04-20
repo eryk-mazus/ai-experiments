@@ -1,4 +1,5 @@
 fire
 gdown
 loguru
+matplotlib
 torch
