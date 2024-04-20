@@ -240,12 +240,18 @@ class Decoder(nn.Module):
 
 class VQ_VAE(nn.Module):
     def __init__(
-        self, in_channels: int = 3, hidden_dim: int = 256, num_embeddings: int = 512
+        self,
+        in_channels: int = 3,
+        hidden_dim: int = 256,
+        num_embeddings: int = 512,
+        commitment_cost: float = 0.25,
     ) -> None:
         super().__init__()
         self._encoder = Encoder(in_channels, hidden_dim)
         self._vq = VectorQuantizer(
-            num_embeddings=num_embeddings, embedding_dim=hidden_dim
+            num_embeddings=num_embeddings,
+            embedding_dim=hidden_dim,
+            commitment_cost=commitment_cost,
         )
         self._decoder = Decoder(
             in_channels=hidden_dim, hidden_dim=hidden_dim, out_channels=in_channels

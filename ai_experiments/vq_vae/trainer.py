@@ -150,16 +150,17 @@ def main(
     # dataloader hyperparams
     root: str = "./data/",  # path to the `celeba` folder, more details: https://pytorch.org/vision/main/_modules/torchvision/datasets/celeba.html
     image_size: int = 128,
-    batch_size: int = 64,
+    batch_size: int = 32,
     num_workers: int = 2,
     # VQ-VAE hyperparams
-    hidden_dim: int = 256,
-    num_embeddings: int = 512,
+    hidden_dim: int = 16,
+    num_embeddings: int = 256,
+    commitment_cost: float = 0.25,
     # training hyperparams
-    epochs: int = 20,
-    learning_rate: float = 2e-4,
+    epochs: int = 10,
+    learning_rate: float = 1e-3,
     weight_decay: float = 0.01,
-    vq_loss_requlatization: float = 0.1,
+    vq_loss_requlatization: float = 1.0,
     # other
     output_dir: str = "output",
     log_every: int = 10,
@@ -169,8 +170,16 @@ def main(
         root=root, image_size=image_size, batch_size=batch_size, num_workers=num_workers
     )
 
-    model = VQ_VAE(in_channels=3, hidden_dim=hidden_dim, num_embeddings=num_embeddings)
+    model = VQ_VAE(
+        in_channels=3,
+        hidden_dim=hidden_dim,
+        num_embeddings=num_embeddings,
+        commitment_cost=commitment_cost,
+    )
     model.to(device)
+    logger.info(
+        "Number of parameters: {:,}".format(sum(p.numel() for p in model.parameters()))
+    )
 
     optimizer = optim.AdamW(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay
