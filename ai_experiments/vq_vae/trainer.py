@@ -11,7 +11,6 @@ from ai_experiments.dataloaders.celeba import get_celeba_dataloaders
 from ai_experiments.vq_vae.vq_vae import VQ_VAE, VQ_VAE_Loss
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 class AverageMeter:
@@ -121,6 +120,9 @@ class VQ_VAE_Trainer:
         }
 
     def train(self, log_every: int = 10):
+        output_path = Path(self.output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
         for epoch in range(self.epochs):
             logger.info("EPOCH {}:".format(epoch + 1))
 
@@ -131,12 +133,18 @@ class VQ_VAE_Trainer:
             validation_summary = self.validate_one_epoch()
             self.log_loss_summary(validation_summary, stage="Validation")
 
-        # save the final checkpoint
-        output_path = Path(self.output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_name = f"model_{epoch}_{timestamp}.pth"
+            model_path = output_path / model_name
+            torch.save(self.model.state_dict(), model_path)
 
-        model_name = "model_{}".format(TIMESTAMP)
-        model_path = output_path / model_name
+        # save the final checkpoint
+        final_output_path = output_path / "final"
+        final_output_path.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_name = "model_{}.pth".format(timestamp)
+        model_path = final_output_path / model_name
 
         torch.save(self.model.state_dict(), model_path)
 
